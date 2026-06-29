@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Activity, Clipboard, CheckCircle, AlertCircle, RefreshCw, Printer, CreditCard, DollarSign, Search } from 'lucide-react'
+import { getBillingRecords, setBillingRecords, BillingRecord } from '@/lib/medicalStore'
 
 interface PatientBill {
   pendaftaranId: string
@@ -14,21 +15,9 @@ interface PatientBill {
   medicineFee: number
   medicineItems: { id: string; nama: string; jumlah: number; satuan: string; hargaSatuan: number; subtotal: number }[]
   totalBill: number
+  treatmentFee?: number
+  isLocalBill?: boolean
   pembayaran?: { id: string; status: string; metodePembayaran: string; noKuitansi: string }
-}
-
-interface PembayaranListItem {
-  id: string
-  pendaftaranId: string
-  totalTagihan: number
-  metodePembayaran: string
-  status: string
-  noKuitansi: string
-  createdAt: string
-  pendaftaran: {
-    pasien: { nama: string; noRekamMedis: string }
-    poli: { nama: string }
-  }
 }
 
 export default function KasirPembayaranPage() {
@@ -58,10 +47,35 @@ export default function KasirPembayaranPage() {
       const todayStr = new Date().toISOString().split('T')[0]
       const res = await fetch(`/api/v1/pendaftaran?tanggal=${todayStr}`)
       const data = await res.json()
+      
+      let dbVisits = []
       if (data.success) {
-        // We show all visits today
-        setActiveVisits(data.data)
+        dbVisits = data.data
       }
+
+      // Merge with local bills from medicalStore (IGD, Inpatient)
+      const localBills = getBillingRecords()
+      const formattedLocal = localBills.map(bill => ({
+        id: bill.id,
+        isLocalBill: true,
+        pasien: {
+          id: bill.id,
+          nama: bill.pasienNama,
+          noRekamMedis: bill.noRM,
+          telepon: '',
+          alamat: ''
+        },
+        poli: { nama: bill.tipeLayanan.replace('_', ' ') },
+        dokter: { nama: bill.dokterNama },
+        status: bill.tipeLayanan,
+        pembayaran: bill.status === 'LUNAS' ? {
+          status: 'LUNAS',
+          metodePembayaran: bill.metodePembayaran || 'TUNAI',
+          noKuitansi: bill.noKuitansi || ''
+        } : null
+      }))
+
+      setActiveVisits([...dbVisits, ...formattedLocal])
     } catch (err) {
       console.error(err)
     } finally {
@@ -74,17 +88,52 @@ export default function KasirPembayaranPage() {
   }, [])
 
   // Load detailed billing calculation when selected
-  const handleSelectVisit = async (pendaftaranId: string) => {
+  const handleSelectVisit = async (pendaftaranId: string, isLocal?: boolean) => {
     setError('')
     setSuccess('')
     setNomorKartu('')
     setRujukanNo('')
     setAsuransiProvider('')
+
+    if (isLocal) {
+      const localBills = getBillingRecords()
+      const bill = localBills.find(b => b.id === pendaftaranId)
+      if (bill) {
+        const formatted: PatientBill = {
+          pendaftaranId: bill.id,
+          isLocalBill: true,
+          pasien: { id: bill.id, noRekamMedis: bill.noRM, nama: bill.pasienNama, telepon: '', alamat: '' },
+          dokterNama: bill.dokterNama,
+          poliNama: bill.tipeLayanan.replace('_', ' '),
+          tanggal: bill.tanggal,
+          statusPendaftaran: bill.status,
+          polyFee: bill.polyFee,
+          medicineFee: bill.medicineFee,
+          treatmentFee: bill.treatmentFee,
+          medicineItems: [],
+          totalBill: bill.totalBill,
+          pembayaran: bill.status === 'LUNAS' ? {
+            id: bill.id,
+            status: 'LUNAS',
+            metodePembayaran: bill.metodePembayaran || 'TUNAI',
+            noKuitansi: bill.noKuitansi || ''
+          } : undefined
+        }
+        setSelectedBill(formatted)
+        if (bill.status === 'LUNAS') {
+          setMetodePembayaran(bill.metodePembayaran || 'TUNAI')
+        } else {
+          setMetodePembayaran('TUNAI')
+        }
+      }
+      return
+    }
+
     try {
       const res = await fetch(`/api/v1/pembayaran?pendaftaranId=${pendaftaranId}`)
       const data = await res.json()
       if (data.success) {
-        setSelectedBill(data.data)
+        setSelectedBill({ ...data.data, isLocalBill: false })
         // Auto set method if already paid
         if (data.data.pembayaran) {
           setMetodePembayaran(data.data.pembayaran.metodePembayaran)
@@ -108,6 +157,47 @@ export default function KasirPembayaranPage() {
     setSuccess('')
     setIsSubmitting(true)
 
+    if (selectedBill.isLocalBill) {
+      // Local bill checkout logic (IGD / Inpatient)
+      const now = new Date()
+      const yy = now.getFullYear().toString().substring(2, 4)
+      const mm = (now.getMonth() + 1).toString().padStart(2, '0')
+      const noKuitansi = `INV-LOC-${yy}${mm}${Math.floor(Math.random() * 9000) + 1000}`
+
+      const localBills = getBillingRecords()
+      const updated = localBills.map(b => {
+        if (b.id === selectedBill.pendaftaranId) {
+          return {
+            ...b,
+            status: 'LUNAS' as const,
+            noKuitansi,
+            metodePembayaran,
+            nomorKartu: nomorKartu || undefined,
+            asuransiProvider: asuransiProvider || undefined
+          }
+        }
+        return b
+      })
+      setBillingRecords(updated)
+
+      setSuccess(`Pembayaran invoice ${noKuitansi} sebesar Rp ${selectedBill.totalBill.toLocaleString()} berhasil diproses.`)
+      setReceiptData({
+        ...selectedBill,
+        noKuitansi,
+        metodePembayaran,
+        nomorKartu,
+        rujukanNo,
+        asuransiProvider,
+        kasirNama: 'Kiki (Kasir)'
+      })
+      setShowReceipt(true)
+      setSelectedBill(null)
+      loadVisits()
+      setIsSubmitting(false)
+      return
+    }
+
+    // DB bill checkout logic
     const payload: any = {
       pendaftaranId: selectedBill.pendaftaranId,
       metodePembayaran,
@@ -144,7 +234,6 @@ export default function KasirPembayaranPage() {
       } else {
         setSuccess(`Pembayaran invoice ${data.data.noKuitansi} sebesar Rp ${selectedBill.totalBill.toLocaleString()} berhasil diproses.`)
         
-        // Save for printing receipt
         setReceiptData({
           ...selectedBill,
           noKuitansi: data.data.noKuitansi,
@@ -152,7 +241,7 @@ export default function KasirPembayaranPage() {
           nomorKartu: data.data.nomorKartu,
           rujukanNo: data.data.rujukanNo,
           asuransiProvider: data.data.asuransiProvider,
-          kasirNama: 'Kiki (Kasir)' // Default staff cashier
+          kasirNama: 'Kiki (Kasir)'
         })
         setShowReceipt(true)
 
@@ -171,52 +260,59 @@ export default function KasirPembayaranPage() {
   }
 
   return (
-    <div className="space-y-8 animate-fade-in relative">
+    <div className="space-y-8 animate-fade-in relative text-slate-900 dark:text-zinc-100">
       
       {/* Receipt Print Overlay Modal */}
       {showReceipt && receiptData && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-6 z-50 print:p-0 print:bg-white print:static print:h-full">
-          <div className="w-full max-w-md glass-panel p-8 rounded-3xl bg-zinc-900 border border-zinc-800 text-left shadow-2xl relative print:border print:border-black print:bg-white print:text-black print:shadow-none print:p-0">
+          <div className="w-full max-w-md glass-panel p-8 rounded-3xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 text-left shadow-2xl relative print:border print:border-black print:bg-white print:text-black print:shadow-none print:p-0">
             
-            <div className="text-center pb-6 border-b border-zinc-800 border-dashed print:border-black">
-              <h3 className="font-display font-bold text-lg text-white print:text-black uppercase">Klinik Pratama</h3>
-              <p className="text-[10px] text-zinc-500 font-medium">Jl. Kesehatan Medika No. 8 &bull; Jakarta</p>
-              <span className="text-[10px] text-indigo-400 font-semibold uppercase tracking-wider block mt-2 print:text-black">Kuitansi Pembayaran Lunas</span>
+            <div className="text-center pb-6 border-b border-slate-200 dark:border-zinc-800 border-dashed print:border-black">
+              <h3 className="font-display font-bold text-lg text-slate-900 dark:text-white print:text-black uppercase">Klinik Pratama</h3>
+              <p className="text-[10px] text-slate-500 font-medium">Jl. Kesehatan Medika No. 8 &bull; Jakarta</p>
+              <span className="text-[10px] text-indigo-650 dark:text-indigo-400 font-semibold uppercase tracking-wider block mt-2 print:text-black">Kuitansi Pembayaran Lunas</span>
             </div>
 
-            <div className="py-4 space-y-2 text-xs border-b border-zinc-800 print:border-black">
+            <div className="py-4 space-y-2 text-xs border-b border-slate-200 dark:border-zinc-800 print:border-black">
               <div className="flex justify-between">
-                <span className="text-zinc-500">No. Kuitansi</span>
-                <span className="font-mono font-bold text-white print:text-black">{receiptData.noKuitansi}</span>
+                <span className="text-slate-400">No. Kuitansi</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-white print:text-black">{receiptData.noKuitansi}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-zinc-500">Tanggal</span>
-                <span className="text-zinc-300 print:text-black">{new Date().toLocaleString('id-ID')}</span>
+                <span className="text-slate-400">Tanggal</span>
+                <span className="text-slate-700 dark:text-zinc-300 print:text-black">{new Date().toLocaleString('id-ID')}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-zinc-500">Pasien</span>
-                <span className="font-bold text-white print:text-black">{receiptData.pasien.nama} ({receiptData.pasien.noRekamMedis})</span>
+                <span className="text-slate-400">Pasien</span>
+                <span className="font-bold text-slate-900 dark:text-white print:text-black">{receiptData.pasien.nama} ({receiptData.pasien.noRekamMedis})</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-zinc-500">Poli / Dokter</span>
-                <span className="text-zinc-300 print:text-black">{receiptData.poliNama} / {receiptData.dokterNama}</span>
+                <span className="text-slate-400">Layanan / Dokter</span>
+                <span className="text-slate-700 dark:text-zinc-300 print:text-black">{receiptData.poliNama} / {receiptData.dokterNama}</span>
               </div>
             </div>
 
             {/* Bill Details */}
-            <div className="py-4 space-y-3 text-xs border-b border-zinc-800 print:border-black">
-              <div className="flex justify-between font-semibold">
+            <div className="py-4 space-y-3 text-xs border-b border-slate-200 dark:border-zinc-800 print:border-black">
+              <div className="flex justify-between font-semibold text-slate-900 dark:text-white">
                 <span>Rincian Layanan</span>
                 <span>Subtotal</span>
               </div>
               
-              <div className="flex justify-between text-zinc-400 print:text-black">
-                <span>Registrasi & Jasa Konsultasi Poli</span>
+              <div className="flex justify-between text-slate-600 dark:text-zinc-400 print:text-black">
+                <span>Registrasi & Kamar / Jasa Konsultasi</span>
                 <span>Rp {receiptData.polyFee.toLocaleString()}</span>
               </div>
 
+              {receiptData.treatmentFee > 0 && (
+                <div className="flex justify-between text-slate-600 dark:text-zinc-400 print:text-black">
+                  <span>Biaya Tindakan Medis</span>
+                  <span>Rp {receiptData.treatmentFee.toLocaleString()}</span>
+                </div>
+              )}
+
               {receiptData.medicineItems.map((item: any) => (
-                <div key={item.id} className="flex justify-between text-zinc-400 print:text-black">
+                <div key={item.id} className="flex justify-between text-slate-600 dark:text-zinc-400 print:text-black">
                   <span>{item.nama} ({item.jumlah} {item.satuan} @ Rp {item.hargaSatuan.toLocaleString()})</span>
                   <span>Rp {item.subtotal.toLocaleString()}</span>
                 </div>
@@ -225,43 +321,17 @@ export default function KasirPembayaranPage() {
 
             {/* Total */}
             <div className="py-4 space-y-2 text-xs">
-              <div className="flex justify-between text-sm font-black text-white print:text-black">
+              <div className="flex justify-between text-sm font-black text-slate-900 dark:text-white print:text-black">
                 <span>TOTAL TAGIHAN</span>
                 <span>Rp {receiptData.totalBill.toLocaleString()}</span>
               </div>
-              <div className="flex justify-between text-zinc-500">
+              <div className="flex justify-between text-slate-500">
                 <span>Metode Pembayaran</span>
-                <span className="font-bold uppercase text-indigo-400 print:text-black">{receiptData.metodePembayaran}</span>
+                <span className="font-bold uppercase text-indigo-650 dark:text-indigo-400 print:text-black">{receiptData.metodePembayaran}</span>
               </div>
-              {receiptData.metodePembayaran === 'BPJS' && (
-                <>
-                  <div className="flex justify-between text-zinc-500">
-                    <span>No. Kartu BPJS</span>
-                    <span className="font-semibold text-zinc-300 print:text-black">{receiptData.nomorKartu}</span>
-                  </div>
-                  {receiptData.rujukanNo && (
-                    <div className="flex justify-between text-zinc-500">
-                      <span>No. Rujukan BPJS</span>
-                      <span className="font-semibold text-zinc-300 print:text-black">{receiptData.rujukanNo}</span>
-                    </div>
-                  )}
-                </>
-              )}
-              {receiptData.metodePembayaran === 'ASURANSI' && (
-                <>
-                  <div className="flex justify-between text-zinc-500">
-                    <span>Provider Asuransi</span>
-                    <span className="font-semibold text-zinc-300 print:text-black">{receiptData.asuransiProvider}</span>
-                  </div>
-                  <div className="flex justify-between text-zinc-500">
-                    <span>No. Polis/Kartu</span>
-                    <span className="font-semibold text-zinc-300 print:text-black">{receiptData.nomorKartu}</span>
-                  </div>
-                </>
-              )}
             </div>
 
-            <div className="mt-8 text-center text-[10px] text-zinc-500 border-t border-zinc-800/50 pt-4 border-dashed print:border-black">
+            <div className="mt-8 text-center text-[10px] text-slate-400 dark:text-zinc-500 border-t border-slate-200 dark:border-zinc-800/50 pt-4 border-dashed print:border-black">
               Terima kasih atas kunjungan Anda.<br/>Semoga lekas sembuh!
             </div>
 
@@ -276,7 +346,7 @@ export default function KasirPembayaranPage() {
               </button>
               <button
                 onClick={() => { setShowReceipt(false); setReceiptData(null) }}
-                className="flex-1 bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 text-zinc-300 font-semibold text-xs py-3 rounded-xl cursor-pointer"
+                className="flex-1 bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300 font-semibold text-xs py-3 rounded-xl cursor-pointer"
               >
                 Tutup
               </button>
@@ -290,20 +360,20 @@ export default function KasirPembayaranPage() {
       <div className="print:hidden">
         {/* Title */}
         <div>
-          <h2 className="text-3xl font-bold font-display text-white">Kasir & Pembayaran</h2>
-          <p className="text-zinc-400 text-sm mt-1">Kalkulasikan tagihan kunjungan pasien, terima pembayaran multi-metode, dan cetak struk kuitansi.</p>
+          <h2 className="text-3xl font-bold font-display dark:text-white">Kasir & Pembayaran</h2>
+          <p className="text-slate-500 dark:text-zinc-400 text-sm mt-1">Kalkulasikan tagihan kunjungan pasien (Rawat Jalan, IGD, & Rawat Inap), terima pembayaran, dan cetak kuitansi.</p>
         </div>
 
         {/* Action alerts feedback */}
         {error && (
-          <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm p-4 rounded-xl flex items-center gap-2 my-4">
+          <div className="bg-red-500/10 border border-red-500/20 text-red-650 dark:text-red-400 text-sm p-4 rounded-xl flex items-center gap-2 my-4">
             <AlertCircle className="h-4 w-4" />
             <span>{error}</span>
           </div>
         )}
         {success && (
-          <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm p-4 rounded-xl flex items-center gap-2 my-4">
-            <CheckCircleIcon className="h-4 w-4 text-emerald-400" />
+          <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-sm p-4 rounded-xl flex items-center gap-2 my-4">
+            <CheckCircle className="h-4 w-4" />
             <span>{success}</span>
           </div>
         )}
@@ -312,7 +382,7 @@ export default function KasirPembayaranPage() {
           
           {/* Left Column: List of today's registrations (5 columns) */}
           <div className="lg:col-span-5 space-y-4">
-            <h3 className="text-lg font-bold font-display text-white">💳 Daftar Kunjungan Hari Ini</h3>
+            <h3 className="text-lg font-bold font-display dark:text-white">💳 Daftar Kunjungan Hari Ini</h3>
 
             {/* Search Input Filter */}
             <div className="relative">
@@ -321,9 +391,9 @@ export default function KasirPembayaranPage() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Cari Nama, No. RM, NIK, atau Telp..."
-                className="w-full bg-zinc-950 border border-zinc-850 rounded-xl py-2 px-3 pl-9 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 transition-all"
+                className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-205 dark:border-zinc-850 rounded-xl py-2 px-3 pl-9 text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-zinc-650 focus:outline-none focus:border-indigo-500 transition-all"
               />
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-zinc-500">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 dark:text-zinc-500">
                 <Search className="h-3.5 w-3.5" />
               </div>
             </div>
@@ -335,15 +405,13 @@ export default function KasirPembayaranPage() {
                 const query = searchQuery.toLowerCase()
                 return (
                   visit.pasien.nama.toLowerCase().includes(query) ||
-                  visit.pasien.noRekamMedis.toLowerCase().includes(query) ||
-                  (visit.pasien.nik && visit.pasien.nik.toLowerCase().includes(query)) ||
-                  (visit.pasien.telepon && visit.pasien.telepon.toLowerCase().includes(query))
+                  visit.pasien.noRekamMedis.toLowerCase().includes(query)
                 )
               })
 
               if (filtered.length === 0) {
                 return (
-                  <div className="glass-panel p-8 text-center rounded-2xl text-zinc-500 text-sm">
+                  <div className="glass-panel p-8 text-center rounded-2xl text-slate-400 dark:text-zinc-500 text-sm">
                     Tidak ada kunjungan yang cocok dengan pencarian.
                   </div>
                 )
@@ -353,34 +421,33 @@ export default function KasirPembayaranPage() {
                 <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
                   {filtered.map((visit) => {
                     const isPaid = visit.pembayaran?.status === 'LUNAS'
-                    const hasRecord = visit.rekamMedis !== null
                     return (
                       <button
                         key={visit.id}
-                        onClick={() => handleSelectVisit(visit.id)}
-                        className={`w-full glass-panel p-4 rounded-2xl border text-left flex justify-between items-center transition-all ${
+                        onClick={() => handleSelectVisit(visit.id, visit.isLocalBill)}
+                        className={`w-full glass-panel p-4 rounded-2xl border text-left flex justify-between items-center transition-all cursor-pointer ${
                           selectedBill?.pendaftaranId === visit.id
                             ? 'border-indigo-500 bg-indigo-500/5 shadow-md shadow-indigo-600/5'
-                            : 'border-zinc-800 bg-zinc-900/20 hover:border-zinc-700'
+                            : 'border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/20 hover:border-slate-350 dark:hover:border-zinc-700'
                         }`}
                       >
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm text-white">{visit.pasien.nama}</span>
-                            <span className="text-[10px] text-zinc-500 font-mono">({visit.pasien.noRekamMedis})</span>
+                            <span className="font-bold text-sm text-slate-900 dark:text-white">{visit.pasien.nama}</span>
+                            <span className="text-[10px] text-slate-400 dark:text-zinc-500 font-mono">({visit.pasien.noRekamMedis})</span>
                           </div>
-                          <div className="text-[11px] text-zinc-400 mt-1">
-                            Poli: {visit.poli.nama} &bull; Dokter: {visit.dokter.nama}
+                          <div className="text-[11px] text-slate-500 dark:text-zinc-400 mt-1">
+                            Layanan: {visit.poli.nama} &bull; Dokter: {visit.dokter.nama}
                           </div>
-                          <div className="text-[10px] text-zinc-500 mt-1">
-                            Pemeriksaan: <span className="font-semibold text-zinc-300">{visit.status}</span>
+                          <div className="text-[10px] text-slate-400 dark:text-zinc-500 mt-1">
+                            Status: <span className="font-semibold text-slate-600 dark:text-zinc-300">{visit.status}</span>
                           </div>
                         </div>
                         
                         <span className={`text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-wider font-mono ${
                           isPaid
-                            ? 'bg-emerald-500/10 text-emerald-400'
-                            : 'bg-red-500/10 text-red-400'
+                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                            : 'bg-red-500/10 text-red-650 dark:text-red-400'
                         }`}>
                           {isPaid ? 'Lunas' : 'Belum Bayar'}
                         </span>
@@ -395,21 +462,21 @@ export default function KasirPembayaranPage() {
           {/* Right Column: Billing checkout sheet (7 columns) */}
           <div className="lg:col-span-7">
             {selectedBill ? (
-              <form onSubmit={handleCheckoutPayment} className="glass-panel p-6 rounded-3xl bg-zinc-900/30 border border-zinc-800 space-y-6">
+              <form onSubmit={handleCheckoutPayment} className="glass-panel p-6 rounded-3xl bg-white dark:bg-zinc-900/30 border border-slate-200 dark:border-zinc-800 space-y-6">
                 
                 {/* Billing Header */}
-                <div className="pb-4 border-b border-zinc-800 flex justify-between items-center">
+                <div className="pb-4 border-b border-slate-200 dark:border-zinc-800 flex justify-between items-center">
                   <div>
-                    <span className="text-xs text-zinc-500 uppercase tracking-wider">Lembar Kasir / Checkout</span>
-                    <h4 className="font-bold text-lg text-white">{selectedBill.pasien.nama} ({selectedBill.pasien.noRekamMedis})</h4>
-                    <p className="text-xs text-zinc-400 mt-0.5">
-                      Poli: {selectedBill.poliNama} &bull; Dokter: {selectedBill.dokterNama}
+                    <span className="text-xs text-slate-400 dark:text-zinc-500 uppercase tracking-wider">Lembar Kasir / Checkout</span>
+                    <h4 className="font-bold text-lg dark:text-white">{selectedBill.pasien.nama} ({selectedBill.pasien.noRekamMedis})</h4>
+                    <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
+                      Layanan: {selectedBill.poliNama} &bull; Dokter: {selectedBill.dokterNama}
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setSelectedBill(null)}
-                    className="text-xs text-zinc-500 hover:text-white"
+                    className="text-xs text-slate-400 hover:text-slate-650 dark:hover:text-white"
                   >
                     Tutup
                   </button>
@@ -417,63 +484,71 @@ export default function KasirPembayaranPage() {
 
                 {/* Billing Summary List */}
                 <div className="space-y-4">
-                  <h5 className="font-bold text-sm text-white">Item Billing Tagihan</h5>
+                  <h5 className="font-bold text-sm dark:text-white">Item Billing Tagihan</h5>
                   
                   <div className="space-y-3">
-                    {/* Poly consulting fee */}
-                    <div className="flex justify-between items-center bg-zinc-950/50 p-4 rounded-xl border border-zinc-850 text-xs">
+                    {/* Poly consulting/room fee */}
+                    <div className="flex justify-between items-center bg-slate-50 dark:bg-zinc-950/50 p-4 rounded-xl border border-slate-200 dark:border-zinc-850 text-xs">
                       <div>
-                        <span className="font-bold text-white block">Jasa Konsultasi & Registrasi</span>
-                        <span className="text-[10px] text-zinc-500">{selectedBill.poliNama}</span>
+                        <span className="font-bold dark:text-white block">Jasa Konsultasi / Sewa Kamar</span>
+                        <span className="text-[10px] text-slate-400 dark:text-zinc-500">{selectedBill.poliNama}</span>
                       </div>
-                      <span className="font-mono font-bold text-zinc-300">
+                      <span className="font-mono font-bold text-slate-700 dark:text-zinc-300">
                         Rp {selectedBill.polyFee.toLocaleString()}
                       </span>
                     </div>
 
+                    {/* Treatment fees */}
+                    {selectedBill.treatmentFee !== undefined && selectedBill.treatmentFee > 0 && (
+                      <div className="flex justify-between items-center bg-slate-50 dark:bg-zinc-950/50 p-4 rounded-xl border border-slate-200 dark:border-zinc-850 text-xs">
+                        <div>
+                          <span className="font-bold dark:text-white block">Biaya Tindakan Medis</span>
+                          <span className="text-[10px] text-slate-400 dark:text-zinc-500">IGD / Rawat Inap care</span>
+                        </div>
+                        <span className="font-mono font-bold text-slate-700 dark:text-zinc-300">
+                          Rp {selectedBill.treatmentFee.toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+
                     {/* Prescription items */}
-                    {selectedBill.medicineItems.length > 0 ? (
-                      <div className="bg-zinc-950/50 p-4 rounded-xl border border-zinc-850 text-xs space-y-3">
-                        <span className="font-bold text-white block border-b border-zinc-800 pb-2">Rincian Obat Apotik</span>
-                        
+                    {selectedBill.medicineItems.length > 0 && (
+                      <div className="bg-slate-50 dark:bg-zinc-950/50 p-4 rounded-xl border border-slate-200 dark:border-zinc-850 text-xs space-y-3">
+                        <span className="font-bold dark:text-white block border-b border-slate-100 dark:border-zinc-800 pb-2">Rincian Obat Apotik</span>
                         {selectedBill.medicineItems.map((item) => (
                           <div key={item.id} className="flex justify-between items-center">
                             <div>
                               <span>{item.nama}</span>
-                              <span className="text-[10px] text-zinc-500 block">
+                              <span className="text-[10px] text-slate-450 dark:text-zinc-500 block">
                                 {item.jumlah} {item.satuan} @ Rp {item.hargaSatuan.toLocaleString()}
                               </span>
                             </div>
-                            <span className="font-mono text-zinc-300">
+                            <span className="font-mono text-slate-700 dark:text-zinc-300">
                               Rp {item.subtotal.toLocaleString()}
                             </span>
                           </div>
                         ))}
-                      </div>
-                    ) : (
-                      <div className="text-zinc-500 text-xs italic bg-zinc-950/20 p-4 rounded-xl text-center border border-zinc-850 border-dashed">
-                        Tidak ada resep obat terbit untuk kunjungan ini.
                       </div>
                     )}
                   </div>
                 </div>
 
                 {/* Big Total billing box */}
-                <div className="bg-indigo-600/10 border border-indigo-600/20 rounded-2xl p-5 flex items-center justify-between">
+                <div className="bg-indigo-600/10 border border-indigo-650/20 dark:border-indigo-600/20 rounded-2xl p-5 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-xl bg-indigo-600/20 flex items-center justify-center text-indigo-400">
+                    <div className="h-10 w-10 rounded-xl bg-indigo-50 dark:bg-indigo-600/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
                       <DollarSign className="h-5 w-5" />
                     </div>
                     <div>
-                      <span className="text-[10px] text-zinc-500 uppercase tracking-wider block">Total yang Harus Dibayar</span>
-                      <span className="text-xl font-black font-display text-white mt-0.5">
+                      <span className="text-[10px] text-slate-400 dark:text-zinc-500 uppercase tracking-wider block">Total yang Harus Dibayar</span>
+                      <span className="text-xl font-black font-display dark:text-white mt-0.5">
                         Rp {selectedBill.totalBill.toLocaleString()}
                       </span>
                     </div>
                   </div>
                   
                   {selectedBill.pembayaran?.status === 'LUNAS' && (
-                    <span className="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold px-3 py-1.5 rounded-xl uppercase tracking-wider">
+                    <span className="text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-bold px-3 py-1.5 rounded-xl uppercase tracking-wider">
                       Lunas
                     </span>
                   )}
@@ -481,9 +556,9 @@ export default function KasirPembayaranPage() {
 
                 {/* Payment process selectors */}
                 {selectedBill.pembayaran?.status !== 'LUNAS' ? (
-                  <div className="space-y-4 border-t border-zinc-850 pt-5">
+                  <div className="space-y-4 border-t border-slate-200 dark:border-zinc-850 pt-5">
                     <div>
-                      <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Metode Pembayaran</label>
+                      <label className="block text-xs font-semibold text-slate-400 dark:text-zinc-400 uppercase tracking-wider mb-2">Metode Pembayaran</label>
                       <div className="grid grid-cols-4 gap-3 text-center">
                         {['TUNAI', 'TRANSFER', 'BPJS', 'ASURANSI'].map((method) => (
                           <button
@@ -493,7 +568,7 @@ export default function KasirPembayaranPage() {
                             className={`py-3 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
                               metodePembayaran === method
                                 ? 'bg-indigo-600 text-white border-indigo-400 scale-[1.02]'
-                                : 'bg-zinc-950 border-zinc-850 text-zinc-400 hover:text-white'
+                                : 'bg-slate-50 dark:bg-zinc-950 border-slate-200 dark:border-zinc-855 text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-white'
                             }`}
                           >
                             {method}
@@ -502,101 +577,16 @@ export default function KasirPembayaranPage() {
                       </div>
                     </div>
 
-                    {/* BPJS Details */}
-                    {metodePembayaran === 'BPJS' && (
-                      <div className="space-y-3 bg-blue-950/20 border border-blue-500/20 rounded-2xl p-4">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
-                          <span className="text-xs font-bold text-blue-400 uppercase tracking-widest">Data Kepesertaan BPJS</span>
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">
-                            No. Kartu BPJS <span className="text-red-400">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={nomorKartu}
-                            onChange={(e) => setNomorKartu(e.target.value)}
-                            placeholder="0001xxxxxxxxxxxxxx (13 digit)"
-                            maxLength={13}
-                            required
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-2.5 px-3 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-blue-500 transition-all font-mono tracking-widest"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">
-                            No. Surat Rujukan <span className="text-zinc-600">(Opsional)</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={rujukanNo}
-                            onChange={(e) => setRujukanNo(e.target.value)}
-                            placeholder="Contoh: 001/PKM/VI/2026"
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-2.5 px-3 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-blue-500 transition-all"
-                          />
-                        </div>
-                        <p className="text-[10px] text-zinc-600 italic">
-                          * Verifikasi eligibilitas BPJS dilakukan real-time via V-Claim API setelah checkout.
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Asuransi Details */}
-                    {metodePembayaran === 'ASURANSI' && (
-                      <div className="space-y-3 bg-emerald-950/20 border border-emerald-500/20 rounded-2xl p-4">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                          <span className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Data Asuransi Kesehatan</span>
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">
-                            Nama Provider Asuransi <span className="text-red-400">*</span>
-                          </label>
-                          <select
-                            value={asuransiProvider}
-                            onChange={(e) => setAsuransiProvider(e.target.value)}
-                            required
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-2.5 px-3 text-xs text-white focus:outline-none focus:border-emerald-500 transition-all cursor-pointer"
-                          >
-                            <option value="">-- Pilih Provider --</option>
-                            <option value="Prudential">Prudential</option>
-                            <option value="Allianz">Allianz</option>
-                            <option value="AXA Mandiri">AXA Mandiri</option>
-                            <option value="Manulife">Manulife</option>
-                            <option value="Sinarmas">Sinarmas</option>
-                            <option value="Jasa Raharja">Jasa Raharja</option>
-                            <option value="Lainnya">Lainnya</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">
-                            No. Polis / Kartu Anggota <span className="text-red-400">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={nomorKartu}
-                            onChange={(e) => setNomorKartu(e.target.value)}
-                            placeholder="Nomor polis atau kartu anggota"
-                            required
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-2.5 px-3 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 transition-all font-mono tracking-widest"
-                          />
-                        </div>
-                        <p className="text-[10px] text-zinc-600 italic">
-                          * Verifikasi keanggotaan asuransi dilakukan via API Gateway yang dikonfigurasi Admin.
-                        </p>
-                      </div>
-                    )}
-
                     <button
                       type="submit"
                       disabled={isSubmitting}
-                      className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 text-white font-semibold py-4 rounded-2xl text-xs active:scale-[0.98] transition-all cursor-pointer"
+                      className="w-full bg-indigo-650 hover:bg-indigo-600 dark:bg-indigo-600 dark:hover:bg-indigo-500 disabled:bg-slate-200 dark:disabled:bg-zinc-800 text-white font-semibold py-4 rounded-2xl text-xs active:scale-[0.98] transition-all cursor-pointer"
                     >
                       {isSubmitting ? 'Memproses Transaksi...' : 'Bayar Lunas & Terbitkan Kuitansi'}
                     </button>
                   </div>
                 ) : (
-                  <div className="flex gap-4 border-t border-zinc-850 pt-5">
+                  <div className="flex gap-4 border-t border-slate-200 dark:border-zinc-850 pt-5">
                     <button
                       type="button"
                       onClick={() => {
@@ -608,7 +598,7 @@ export default function KasirPembayaranPage() {
                         })
                         setShowReceipt(true)
                       }}
-                      className="flex-1 flex items-center justify-center gap-1.5 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 font-semibold text-xs py-3 rounded-xl cursor-pointer border border-indigo-500/15"
+                      className="flex-1 flex items-center justify-center gap-1.5 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-600 dark:text-indigo-450 font-semibold text-xs py-3 rounded-xl cursor-pointer border border-indigo-500/15"
                     >
                       <Printer className="h-4 w-4" />
                       <span>Cetak Kuitansi Ulang</span>
@@ -618,8 +608,8 @@ export default function KasirPembayaranPage() {
 
               </form>
             ) : (
-              <div className="glass-panel p-12 text-center rounded-3xl bg-zinc-900/10 border border-zinc-800 text-zinc-500 text-sm">
-                <CreditCard className="h-10 w-10 text-zinc-700 mx-auto mb-4" />
+              <div className="glass-panel p-12 text-center rounded-3xl bg-slate-50 dark:bg-zinc-900/10 border border-slate-200 dark:border-zinc-800 text-slate-400 dark:text-zinc-500 text-sm">
+                <CreditCard className="h-10 w-10 text-slate-300 dark:text-zinc-700 mx-auto mb-4" />
                 Pilih kunjungan pasien di kolom sebelah kiri untuk memuat rincian tagihan obat & pemeriksaan dan memproses pembayaran kasir.
               </div>
             )}
@@ -629,25 +619,5 @@ export default function KasirPembayaranPage() {
       </div>
 
     </div>
-  )
-}
-
-function CheckCircleIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
-      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-      <path d="m9 11 3 3L22 4" />
-    </svg>
   )
 }

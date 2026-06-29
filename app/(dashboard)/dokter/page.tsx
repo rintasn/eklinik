@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Activity, Stethoscope, RefreshCw, CheckCircle, AlertCircle, Heart, Thermometer, User, Plus, Trash2, Search } from 'lucide-react'
+import { recommendInpatientFromOutpatient } from '@/lib/medicalStore'
 
 interface Obat {
   id: string
@@ -80,6 +81,8 @@ export default function DokterConsolePage() {
   const [currentJumlah, setCurrentJumlah] = useState(10)
   const [currentAturan, setCurrentAturan] = useState('3x1 sesudah makan')
   const [currentCatatan, setCurrentCatatan] = useState('')
+
+  const [tindakLanjut, setTindakLanjut] = useState<'RAWAT_JALAN' | 'RAWAT_INAP'>('RAWAT_JALAN')
 
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -215,6 +218,15 @@ export default function DokterConsolePage() {
     setError('')
     setSuccess('')
     setIsSubmitting(true)
+
+    // Inpatient recommendation logic
+    if (tindakLanjut === 'RAWAT_INAP') {
+      recommendInpatientFromOutpatient(
+        selectedReg.pasien.nama,
+        selectedReg.pasien.noRekamMedis,
+        selectedReg.dokter.nama
+      )
+    }
 
     // Build plan text combining plans and prescriptions
     let combinedPlan = plan
@@ -488,6 +500,35 @@ export default function DokterConsolePage() {
                     rows={3}
                     className="w-full bg-zinc-950 border border-zinc-850 rounded-2xl py-3 px-4 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 resize-none"
                   />
+                </div>
+              </div>
+
+              {/* Rencana Tindak Lanjut */}
+              <div className="bg-zinc-950/40 border border-zinc-850 p-4 rounded-2xl">
+                <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Rencana Tindak Lanjut Pasien</label>
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <label className="flex items-center gap-2 text-xs text-zinc-350 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="tindakLanjut"
+                      value="RAWAT_JALAN"
+                      checked={tindakLanjut === 'RAWAT_JALAN'}
+                      onChange={() => setTindakLanjut('RAWAT_JALAN')}
+                      className="accent-indigo-500"
+                    />
+                    <span>Rawat Jalan (Pulang / Selesai Pemeriksaan)</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-zinc-350 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="tindakLanjut"
+                      value="RAWAT_INAP"
+                      checked={tindakLanjut === 'RAWAT_INAP'}
+                      onChange={() => setTindakLanjut('RAWAT_INAP')}
+                      className="accent-indigo-500"
+                    />
+                    <span className="text-indigo-400 font-bold">Rekomendasi Rawat Inap (Admisi Rawat Inap)</span>
+                  </label>
                 </div>
               </div>
 
