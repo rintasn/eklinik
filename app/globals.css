@@ -1,34 +1,42 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 
+/* ─── Light Theme (Default) ─────────────────────────────── */
 :root {
-  --background: #fafafc;
-  --foreground: #0f0f12;
-  --card-bg: rgba(255, 255, 255, 0.7);
-  --card-border: rgba(226, 232, 240, 0.8);
-  
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card-bg: rgba(255, 255, 255, 0.85);
+  --card-border: rgba(226, 232, 240, 0.9);
+
   --primary: #4f46e5;
   --primary-hover: #4338ca;
-  --primary-light: rgba(79, 70, 229, 0.1);
-  
+  --primary-light: rgba(79, 70, 229, 0.08);
+
   --success: #10b981;
   --warning: #f59e0b;
   --danger: #ef4444;
   --info: #06b6d4;
-  
+
   --font-sans: 'Plus Jakarta Sans', sans-serif;
   --font-display: 'Outfit', sans-serif;
+
+  --scrollbar-thumb: rgba(148, 163, 184, 0.4);
+  --scrollbar-thumb-hover: rgba(148, 163, 184, 0.7);
 }
 
+/* ─── Dark Theme ─────────────────────────────────────────── */
 .dark {
   --background: #09090b;
   --foreground: #f4f4f5;
-  --card-bg: rgba(18, 18, 24, 0.7);
-  --card-border: rgba(39, 39, 42, 0.8);
-  
+  --card-bg: rgba(18, 18, 24, 0.8);
+  --card-border: rgba(39, 39, 42, 0.9);
+
   --primary: #6366f1;
   --primary-hover: #4f46e5;
   --primary-light: rgba(99, 102, 241, 0.15);
+
+  --scrollbar-thumb: rgba(63, 63, 70, 0.6);
+  --scrollbar-thumb-hover: rgba(82, 82, 91, 0.8);
 }
 
 @theme {
@@ -40,6 +48,18 @@
   --color-card-border: var(--card-border);
 }
 
+/* ─── Base ───────────────────────────────────────────────── */
+*, *::before, *::after {
+  transition-property: background-color, border-color, color, fill, stroke;
+  transition-duration: 200ms;
+  transition-timing-function: ease;
+}
+
+/* Reset transition on elements that shouldn't transition */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
 body {
   background-color: var(--background);
   color: var(--foreground);
@@ -47,23 +67,22 @@ body {
   min-height: 100vh;
   letter-spacing: -0.01em;
   overflow-x: hidden;
-  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Glassmorphism Panel */
+/* ─── Glassmorphism Panel ────────────────────────────────── */
 .glass-panel {
   background: var(--card-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--card-border);
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.03);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.04);
 }
 
 .dark .glass-panel {
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.25);
 }
 
-/* Custom Scrollbar */
+/* ─── Custom Scrollbar ───────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -74,18 +93,19 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(156, 163, 175, 0.3);
+  background: var(--scrollbar-thumb);
   border-radius: 9999px;
+  transition: background 0.2s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(156, 163, 175, 0.5);
+  background: var(--scrollbar-thumb-hover);
 }
 
-/* Micro-animations */
+/* ─── Micro-animations ───────────────────────────────────── */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .animate-fade-in {
@@ -94,7 +114,7 @@ body {
 
 @keyframes pulseGlow {
   0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
+  50%       { opacity: 1; }
 }
 
 .pulse-glow {

@@ -30,9 +30,9 @@ export default function LogoutButton() {
     <button
       onClick={handleLogout}
       disabled={loading}
-      className="flex items-center gap-3 w-full px-4 py-2.5 text-sm font-medium text-zinc-400 rounded-xl hover:text-red-400 hover:bg-red-500/10 transition-all cursor-pointer group disabled:opacity-50"
+      className="flex items-center gap-3 w-full px-4 py-2.5 text-sm font-medium rounded-xl transition-all cursor-pointer group disabled:opacity-50 text-slate-500 dark:text-zinc-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10"
     >
-      <LogOut className="h-4 w-4 text-zinc-500 group-hover:text-red-400 transition-colors" />
+      <LogOut className="h-4 w-4 text-slate-400 dark:text-zinc-500 group-hover:text-red-500 dark:group-hover:text-red-400 transition-colors" />
       <span>{loading ? 'Keluar...' : 'Keluar Aplikasi'}</span>
     </button>
   )
