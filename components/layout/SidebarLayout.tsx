@@ -21,38 +21,31 @@ import {
 } from 'lucide-react'
 import LogoutButton from '@/components/layout/LogoutButton'
 
-const ICON_MAP: Record<string, React.ElementType> = {
-  Users,
-  ClipboardList,
-  Stethoscope,
-  Pill,
-  CreditCard,
-  Package,
-  Building,
-  Calendar,
-  BarChart3,
-  Settings,
-}
-
-interface MenuItem {
-  href: string
-  label: string
-  icon: React.ElementType
-}
+const ALL_MENU_ITEMS = [
+  { href: '/front-office',  label: 'Front Office',        roles: ['ADMIN', 'FRONT_OFFICE'],                                                                          icon: Users },
+  { href: '/pendaftaran',   label: 'Poli Pendaftaran',    roles: ['ADMIN', 'FRONT_OFFICE', 'PERAWAT'],                                                               icon: ClipboardList },
+  { href: '/dokter',        label: 'Ruang Dokter',        roles: ['ADMIN', 'DOKTER'],                                                                                icon: Stethoscope },
+  { href: '/apotik',        label: 'Apotik',              roles: ['ADMIN', 'APOTEKER'],                                                                              icon: Pill },
+  { href: '/pembayaran',    label: 'Pembayaran',          roles: ['ADMIN', 'KASIR'],                                                                                 icon: CreditCard },
+  { href: '/stok',          label: 'Stok Obat & Alkes',  roles: ['ADMIN', 'MANAJER_STOK', 'APOTEKER'],                                                              icon: Package },
+  { href: '/fasilitas',     label: 'Fasilitas Klinik',   roles: ['ADMIN', 'MANAJER_STOK'],                                                                          icon: Building },
+  { href: '/jadwal',        label: 'Jadwal Kerja',        roles: ['ADMIN', 'FRONT_OFFICE', 'DOKTER', 'PERAWAT', 'APOTEKER', 'KASIR', 'MANAJER_STOK'],               icon: Calendar },
+  { href: '/laporan',       label: 'Laporan & Analisis', roles: ['ADMIN', 'KASIR', 'MANAJER_STOK'],                                                                 icon: BarChart3 },
+  { href: '/konfigurasi',   label: 'Konfigurasi Sistem', roles: ['ADMIN'],                                                                                          icon: Settings },
+]
 
 interface SidebarLayoutProps {
-  menuItems: MenuItem[]
   userName: string
   userRole: string
   children: React.ReactNode
 }
 
 export default function SidebarLayout({
-  menuItems,
   userName,
   userRole,
   children,
 }: SidebarLayoutProps) {
+  const menuItems = ALL_MENU_ITEMS.filter(item => item.roles.includes(userRole))
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const pathname = usePathname()
 
